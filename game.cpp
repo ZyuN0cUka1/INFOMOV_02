@@ -1,5 +1,6 @@
 #include "precomp.h"
 #include "game.h"
+#include "tmpl8math.h"
 
 #define GRIDSIZE 256
 
@@ -35,18 +36,55 @@
 // Note that the GPGPU tasks will benefit from the SIMD tasks.
 // Also note that your final grade will be capped at 10.
 
+#define idx(x,y) ((x)+((y)<<8))
+#define setfloat2(x,y) _mm256_setr_ps((x),(y),(x),(y),(x),(y),(x),(y))
+#define calidx(x) (((x) >> 1) | (((x) & 0x1) << 15))
+#define calidx8(x) ((((x) >> 1) | (((x) & 0x1) << 15)) >> 3)
+#define revidx(x) (((x) >> 15) | (((x) & 0x7fff) << 1))
+#define revidx8(x) ((((x) >> 15) | (((x) & 0x7fff) << 1)) >> 3)
+static union { float posx[GRIDSIZE * GRIDSIZE]; __m256 posx8[GRIDSIZE * GRIDSIZE / 8]; };
+static union { float posy[GRIDSIZE * GRIDSIZE]; __m256 posy8[GRIDSIZE * GRIDSIZE / 8]; };
+static union { float prev_posx[GRIDSIZE * GRIDSIZE]; __m256 prev_posx8[GRIDSIZE * GRIDSIZE / 8]; };
+static union { float prev_posy[GRIDSIZE * GRIDSIZE]; __m256 prev_posy8[GRIDSIZE * GRIDSIZE / 8]; };
+static union { float fixx[GRIDSIZE * GRIDSIZE]; __m256 fixx8[GRIDSIZE * GRIDSIZE / 8]; };
+static union { float fixy[GRIDSIZE * GRIDSIZE]; __m256 fixy8[GRIDSIZE * GRIDSIZE / 8]; };
+
+uint preidx = 0;
+
+struct Pospoint {
+	float& x;
+	float& y;
+	void operator=(const Pospoint& v) {
+		x = v.x;
+		y = v.y;
+	}
+	void operator=(const float2& v) {
+		x = v.x;
+		y = v.y;
+	}
+};
+
 struct Point
 {
-	float2 pos;				// current position of the point
-	float2 prev_pos;		// position of the point in the previous frame
-	float2 fix;				// stationary position; used for the top line of points
+	Pospoint pos{ posx[calidx(preidx)],posy[calidx(preidx)] };			// current position of the point
+	Pospoint prev_pos{ prev_posx[calidx(preidx)],prev_posy[calidx(preidx)] };		// position of the point in the previous frame
+	Pospoint fix{ fixx[calidx(preidx)],fixy[calidx(preidx++)] };				// stationary position; used for the top line of points
 	bool fixed;				// true if this is a point in the top line of the cloth
 	float restlength[4];	// initial distance to neighbours
 };
 
+//struct Point
+//{
+//	float2 pos;
+//	float2 prev_pos;
+//	float2 fix;
+//	bool fixed;
+//	float restlength[4];
+//};
+
 // grid access convenience
 Point* pointGrid = new Point[GRIDSIZE * GRIDSIZE];
-Point& grid( const uint x, const uint y ) { return pointGrid[x + y * GRIDSIZE]; }
+Point& grid(const uint x, const uint y) { return pointGrid[idx(x, y)]; }
 
 // grid offsets for the neighbours via the four links
 int xoffset[4] = { 1, -1, 0, 0 }, yoffset[4] = { 0, 0, 1, -1 };
@@ -54,6 +92,12 @@ int xoffset[4] = { 1, -1, 0, 0 }, yoffset[4] = { 0, 0, 1, -1 };
 // initialization
 void Game::Init()
 {
+	//float a[9] = { 1,2,3,4,5,6,7,8,9 };
+	//__m256& a28 = *((__m256*) & a[1]);
+	//((float*)&a28)[0] = 1;
+	//float out[8]; _mm256_store_ps(out, a28);
+	//cout << "a28:\t" << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
+	
 	// create the cloth
 	for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
 	{
@@ -75,7 +119,8 @@ void Game::Init()
 		// calculate and store distance to four neighbours, allow 15% slack
 		for (int c = 0; c < 4; c++)
 		{
-			grid( x, y ).restlength[c] = length( grid( x, y ).pos - grid( x + xoffset[c], y + yoffset[c] ).pos ) * 1.15f;
+			float2 rest{ grid(x, y).pos.x - grid(x + xoffset[c], y + yoffset[c]).pos.x,grid(x, y).pos.y - grid(x + xoffset[c], y + yoffset[c]).pos.y };
+			grid(x, y).restlength[c] = length(rest) * 1.15f;
 		}
 	}
 }
@@ -90,16 +135,16 @@ void Game::DrawGrid()
 	screen->Clear( 0 );
 	for (int y = 0; y < (GRIDSIZE - 1); y++) for (int x = 1; x < (GRIDSIZE - 2); x++)
 	{
-		const float2 p1 = grid( x, y ).pos;
-		const float2 p2 = grid( x + 1, y ).pos;
-		const float2 p3 = grid( x, y + 1 ).pos;
+		const Pospoint p1 = grid( x, y ).pos;
+		const Pospoint p2 = grid( x + 1, y ).pos;
+		const Pospoint p3 = grid( x, y + 1 ).pos;
 		screen->Line( p1.x, p1.y, p2.x, p2.y, 0xffffff );
 		screen->Line( p1.x, p1.y, p3.x, p3.y, 0xffffff );
 	}
 	for (int y = 0; y < (GRIDSIZE - 1); y++)
 	{
-		const float2 p1 = grid( GRIDSIZE - 2, y ).pos;
-		const float2 p2 = grid( GRIDSIZE - 2, y + 1 ).pos;
+		const Pospoint p1 = grid( GRIDSIZE - 2, y ).pos;
+		const Pospoint p2 = grid( GRIDSIZE - 2, y + 1 ).pos;
 		screen->Line( p1.x, p1.y, p2.x, p2.y, 0xffffff );
 	}
 }
@@ -119,23 +164,26 @@ void Game::Simulation()
 		// verlet integration; apply gravity
 		for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
 		{
-			float2 curpos = grid( x, y ).pos, prevpos = grid( x, y ).prev_pos;
-			grid( x, y ).pos += (curpos - prevpos) + float2( 0, 0.003f ); // gravity
+			float2 curpos{ grid(x, y).pos.x,grid(x, y).pos.y }, prevpos{ grid(x, y).prev_pos.x,grid(x, y).prev_pos.y };
+			grid(x, y).pos = curpos + (curpos - prevpos) + float2(0, 0.003f); // gravity
 			grid( x, y ).prev_pos = curpos;
-			if (Rand( 10 ) < 0.03f) grid( x, y ).pos += float2( Rand( 0.02f + magic ), Rand( 0.12f ) );
+			if (Rand(10) < 0.03f) grid(x, y).pos = float2{ grid(x, y).pos.x,grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
 		}
+
+
+
 		magic += 0.0002f; // slowly increases the chance of anomalies
 		// apply constraints; 4 simulation steps: do not change this number.
 		for (int i = 0; i < 4; i++)
 		{
 			for (int y = 1; y < GRIDSIZE - 1; y++) for (int x = 1; x < GRIDSIZE - 1; x++)
 			{
-				float2 pointpos = grid( x, y ).pos;
+				float2 pointpos = { grid(x, y).pos.x,grid(x, y).pos.y };
 				// use springs to four neighbouring points
 				for (int linknr = 0; linknr < 4; linknr++)
 				{
 					Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
-					float distance = length( neighbour.pos - pointpos );
+					float distance = length(float2{ neighbour.pos.x,neighbour.pos.y } - pointpos);
 					if (!isfinite( distance ))
 					{
 						// warning: this happens; sometimes vertex positions 'explode'.
@@ -145,9 +193,9 @@ void Game::Simulation()
 					{
 						// pull points together
 						float extra = distance / (grid( x, y ).restlength[linknr]) - 1;
-						float2 dir = neighbour.pos - pointpos;
+						float2 dir = float2{ neighbour.pos.x,neighbour.pos.y } - pointpos;
 						pointpos += extra * dir * 0.5f;
-						neighbour.pos -= extra * dir * 0.5f;
+						neighbour.pos = float2{ neighbour.pos.x,neighbour.pos.y } - extra * dir * 0.5f;
 					}
 				}
 				grid( x, y ).pos = pointpos;
