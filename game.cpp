@@ -37,7 +37,8 @@
 // Also note that your final grade will be capped at 10.
 
 #define idx(x,y) ((x)+((y)<<8))
-#define setfloat2(x,y) _mm256_setr_ps((x),(y),(x),(y),(x),(y),(x),(y))
+#define idx8(x,y) (((x)<<3)+((y)<<7))
+#define set256(x) (_mm256_setr_ps((x),(x),(x),(x),(x),(x),(x),(x)))
 #define calidx(x) (((x) >> 1) | (((x) & 0x1) << 15))
 #define calidx8(x) ((((x) >> 1) | (((x) & 0x1) << 15)) >> 3)
 #define revidx(x) (((x) >> 15) | (((x) & 0x7fff) << 1))
@@ -48,6 +49,7 @@ static union { float prev_posx[GRIDSIZE * GRIDSIZE]; __m256 prev_posx8[GRIDSIZE 
 static union { float prev_posy[GRIDSIZE * GRIDSIZE]; __m256 prev_posy8[GRIDSIZE * GRIDSIZE / 8]; };
 static union { float fixx[GRIDSIZE * GRIDSIZE]; __m256 fixx8[GRIDSIZE * GRIDSIZE / 8]; };
 static union { float fixy[GRIDSIZE * GRIDSIZE]; __m256 fixy8[GRIDSIZE * GRIDSIZE / 8]; };
+static union { float urest[4][GRIDSIZE * GRIDSIZE]; __m256 restlength8[4][GRIDSIZE * GRIDSIZE / 8]; };
 
 uint preidx = 0;
 
@@ -64,13 +66,19 @@ struct Pospoint {
 	}
 };
 
+struct float_rest {
+	uint i;
+	float_rest(uint id) :i(id) {};
+	float& operator[](uint idx) { return urest[idx][i]; }
+};
+
 struct Point
 {
 	Pospoint pos{ posx[calidx(preidx)],posy[calidx(preidx)] };			// current position of the point
 	Pospoint prev_pos{ prev_posx[calidx(preidx)],prev_posy[calidx(preidx)] };		// position of the point in the previous frame
-	Pospoint fix{ fixx[calidx(preidx)],fixy[calidx(preidx++)] };				// stationary position; used for the top line of points
+	Pospoint fix{ fixx[calidx(preidx)],fixy[calidx(preidx)] };				// stationary position; used for the top line of points
 	bool fixed;				// true if this is a point in the top line of the cloth
-	float restlength[4];	// initial distance to neighbours
+	float_rest restlength{ preidx++ };	// initial distance to neighbours
 };
 
 //struct Point
@@ -156,24 +164,114 @@ void Game::DrawGrid()
 // when using SIMD, this will only work if the two vertices are not
 // operated upon simultaneously (in a vector register, or in a warp).
 float magic = 0.11f;
+__m256 gy = _mm256_set1_ps(0.003f);
+__m256 xe00mask = _mm256_cmp_ps(_mm256_setr_ps(0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f), _mm256_set1_ps(0.0f), _CMP_GT_OQ);
+__m256 xeffmask = _mm256_cmp_ps(_mm256_setr_ps(1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f), _mm256_set1_ps(0.0f), _CMP_GT_OQ);
+__m256 truemask = _mm256_cmp_ps(_mm256_setr_ps(1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f), _mm256_set1_ps(0.0f), _CMP_GT_OQ);
+int o8s0[4] = { 128 * 256 / 8, 128 * 256 / 8 - 1, 128 / 8, -128 / 8 };
+int o8s1[4] = { 1 - 128 * 256 / 8, -128 * 256 / 8, 128 / 8, -128 / 8 };
+
+void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint& x, const uint& y) {
+	uint i0 = y * 16 + x;
+	//__m256 ppsx = posx8[i0];
+	//__m256 ppsy = posy8[i0];
+	__m256 ppsx = *curx;
+	__m256 ppsy = *cury;
+	for (int linknr = 0; linknr < 4; linknr++)
+	{
+		uint i = calidx(revidx(i0 * 8) + xoffset[linknr] + yoffset[linknr] * GRIDSIZE);
+		__m256& nbrx = *((__m256*) & posx[i]);
+		__m256& nbry = *((__m256*) & posy[i]);
+
+		//float out[8]; _mm256_store_ps(out, nbrx);
+		//cout << "nbrx:\t" << i << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
+		//_mm256_store_ps(out, ppsx);
+		//cout << "ppsx:\t" << i0 << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
+
+
+		__m256 delx = _mm256_sub_ps(nbrx, *curx);
+		__m256 dely = _mm256_sub_ps(nbry, *cury);
+		__m256 dist = _mm256_sqrt_ps(_mm256_add_ps(_mm256_mul_ps(delx, delx), _mm256_mul_ps(dely, dely)));
+		float cmp[8] = {
+			fpclassify(((float*)&dist)[0]),
+			fpclassify(((float*)&dist)[1]),
+			fpclassify(((float*)&dist)[2]),
+			fpclassify(((float*)&dist)[3]),
+			fpclassify(((float*)&dist)[4]),
+			fpclassify(((float*)&dist)[5]),
+			fpclassify(((float*)&dist)[6]),
+			fpclassify(((float*)&dist)[7])
+		};
+		__m256 mask = _mm256_and_ps(_mask, _mm256_and_ps(
+			_mm256_cmp_ps(*((__m256*)cmp), _mm256_set1_ps(0.0f), _CMP_LE_OQ),
+			_mm256_cmp_ps(dist, restlength8[linknr][y * 128 / 8 + x], _CMP_GT_OQ)));
+		__m256 extra = _mm256_sub_ps(_mm256_div_ps(dist, restlength8[linknr][y * 128 / 8 + x]), _mm256_set1_ps(1.0f));
+		__m256 dirx = _mm256_and_ps(mask, _mm256_mul_ps(delx, _mm256_set1_ps(0.5)));
+		__m256 diry = _mm256_and_ps(mask, _mm256_mul_ps(dely, _mm256_set1_ps(0.5)));
+
+
+		//float out[8]; _mm256_store_ps(out, mask);
+		//cout << "delx:curr\t" << revidx(i0 * 8) << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
+		//_mm256_store_ps(out, dist);
+		//cout << "dely:neig\t" << revidx(i) << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
+
+
+		ppsx = _mm256_add_ps(ppsx, dirx);
+		ppsy = _mm256_add_ps(ppsy, diry);
+		nbrx = _mm256_sub_ps(nbrx, dirx);
+		nbry = _mm256_sub_ps(nbry, diry);
+	}
+	posx8[i0] = ppsx;
+	posy8[i0] = ppsy;
+}
+
 void Game::Simulation()
 {
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ )
 	{
 		// verlet integration; apply gravity
-		for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
+		//for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
+		//{
+		//	float2 curpos{ grid(x, y).pos.x,grid(x, y).pos.y }, prevpos{ grid(x, y).prev_pos.x,grid(x, y).prev_pos.y };
+		//	grid(x, y).pos = curpos + (curpos - prevpos) + float2(0, 0.003f); // gravity
+		//	grid( x, y ).prev_pos = curpos;
+		//	if (Rand(10) < 0.03f) grid(x, y).pos = float2{ grid(x, y).pos.x,grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
+		//}
+
+		//------------------avx
+		__m256* curx = posx8;
+		__m256* cury = posy8;
+		__m256* prex = prev_posx8;
+		__m256* prey = prev_posy8;
+		for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE / 8; x++)
 		{
-			float2 curpos{ grid(x, y).pos.x,grid(x, y).pos.y }, prevpos{ grid(x, y).prev_pos.x,grid(x, y).prev_pos.y };
-			grid(x, y).pos = curpos + (curpos - prevpos) + float2(0, 0.003f); // gravity
-			grid( x, y ).prev_pos = curpos;
-			if (Rand(10) < 0.03f) grid(x, y).pos = float2{ grid(x, y).pos.x,grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
+			__m256 cx = *curx;
+			__m256 cy = *cury;
+			__m256 px = *prex;
+			__m256 py = *prey;
+
+			_mm256_store_ps((float*)prex, cx);
+			_mm256_store_ps((float*)prey, cy);
+
+			*curx = _mm256_add_ps(_mm256_sub_ps(cx, px), cx);
+			*cury = _mm256_add_ps(_mm256_sub_ps(cy, py), _mm256_add_ps(cy, gy));
+			
+			__m256 mask = _mm256_cmp_ps(set256(Rand(10)), _mm256_set1_ps(0.03f), _CMP_LT_OQ);
+
+			*curx = _mm256_add_ps(*curx, _mm256_and_ps(mask, set256(Rand(0.02f + magic))));
+			*cury = _mm256_add_ps(*cury, _mm256_and_ps(mask, set256(Rand(0.12f))));
+
+			curx++;
+			cury++;
+			prex++;
+			prey++;
 		}
-
-
+		//------------------avx
 
 		magic += 0.0002f; // slowly increases the chance of anomalies
 		// apply constraints; 4 simulation steps: do not change this number.
+
 		for (int i = 0; i < 4; i++)
 		{
 			for (int y = 1; y < GRIDSIZE - 1; y++) for (int x = 1; x < GRIDSIZE - 1; x++)
@@ -200,8 +298,41 @@ void Game::Simulation()
 				}
 				grid( x, y ).pos = pointpos;
 			}
+
+			//------------------avx
+			//__m256* curx = posx8 + 128 / 8;
+			//__m256* cury = posy8 + 128 / 8;
+			//for (int y = 1; y < GRIDSIZE - 1; y++)
+			//{
+			//	cal_dir(curx, cury, xe00mask, 0, y);
+			//	curx++;
+			//	cury++;
+			//	for (int x = 1; x < GRIDSIZE / 16; x++)
+			//	{
+			//		cal_dir(curx, cury, truemask, x, y);
+			//		curx++;
+			//		cury++;
+			//	}
+			//}
+			//curx += 128 * 2 / 8;
+			//cury += 128 * 2 / 8;
+			//for (int y = GRIDSIZE + 1; y < GRIDSIZE * 2 - 1; y++)
+			//{
+			//	for (int x = 0; x < GRIDSIZE / 16 - 1; x++)
+			//	{
+			//		cal_dir(curx, cury, truemask, x, y);
+			//		curx++;
+			//		cury++;
+			//	}
+			//	
+			//	cal_dir(curx, cury, xeffmask, GRIDSIZE / 16 - 1, y);
+			//	curx++;
+			//	cury++;
+			//}
+			//------------------avx
+
 			// fixed line of points is fixed.
-			for (int x = 0; x < GRIDSIZE; x++) grid( x, 0 ).pos = grid( x, 0 ).fix;
+			for (int x = 0; x < GRIDSIZE; x++) grid(x, 0).pos = grid(x, 0).fix;
 		}
 	}
 }
