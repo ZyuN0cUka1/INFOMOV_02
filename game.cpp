@@ -46,6 +46,7 @@ static float restlength1[4][GRIDSIZE * GRIDSIZE];
 
 static Kernel* clPosKernel = 0;
 static Kernel* clPos2Kernel = 0;
+static Kernel* clFixKernel = 0;
 
 static Buffer* clPosBuffer = 0;
 static Buffer* clPrevposBuffer = 0;
@@ -53,7 +54,9 @@ static Buffer* clFixBuffer = 0;
 static Buffer* clFixflagBuffer = 0;
 static Buffer* clRestBuffer[4] = { 0,0,0,0 };
 static Buffer* magic_buffer = 0;
+static Buffer* flag_buffer = 0;
 float magic = 0.11f;
+uint flag = 0;
 uint preidx = 0;
 
 struct Pospoint {
@@ -106,19 +109,25 @@ void Game::Init()
 {
 
 	clPosKernel = new Kernel("cl/kernels.cl", "update_positions");
-	//clPos2Kernel = new Kernel("cl/kernels.cl", "update_positions2");
+	clPos2Kernel = new Kernel("cl/kernels.cl", "update_positions2");
+	clFixKernel = new Kernel("cl/kernels.cl", "fix_point");
 
 	clPosBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &pos2);
 	clPrevposBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &prev_pos2);
+
 	clFixBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &fix1);
 	clFixflagBuffer = new Buffer(sizeof(bool) * GRIDSIZE * GRIDSIZE, &fixed1);
 	clRestBuffer[0] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[0]);
 	clRestBuffer[1] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[1]);
 	clRestBuffer[2] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[2]);
 	clRestBuffer[3] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[3]);
+
 	magic_buffer = new Buffer(sizeof(float), &magic, 0);
+	flag_buffer = new Buffer(sizeof(uint), &flag, 0);
+
 	clPosKernel->SetArguments(clPosBuffer, clPrevposBuffer, magic_buffer->GetDevicePtr());
-	//clPos2Kernel->SetArguments(0, clPosBuffer, clFixflagBuffer, clFixBuffer, clRestBuffer[0], clRestBuffer[1], clRestBuffer[2], clRestBuffer[3]);
+	clPos2Kernel->SetArguments(flag_buffer->GetDevicePtr(), clPosBuffer, clFixflagBuffer, clFixBuffer, clRestBuffer[0], clRestBuffer[1], clRestBuffer[2], clRestBuffer[3]);
+	clFixKernel->SetArguments(clFixflagBuffer, clPosBuffer, clFixBuffer);
 
 	// create the cloth
 	for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
@@ -145,6 +154,10 @@ void Game::Init()
 			grid(x, y).restlength[c] = length(rest) * 1.15f;
 		}
 	}
+	for (int c = 0; c < 4; c++)
+		clRestBuffer[c]->CopyToDevice();
+	clFixflagBuffer->CopyToDevice();
+	clFixBuffer->CopyToDevice();
 }
 
 // cloth rendering
@@ -180,6 +193,8 @@ void Game::DrawGrid()
 //float magic = 0.11f;
 void Game::Simulation()
 {
+	clPosBuffer->CopyToDevice();
+	//clPrevposBuffer->CopyToDevice();
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ )
 	{
@@ -191,46 +206,54 @@ void Game::Simulation()
 		//	grid( x, y ).prev_pos = curpos;
 		//	if (Rand(10) < 0.03f) grid(x, y).pos = float2{ grid(x, y).pos.x,grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
 		//}
-		clPosBuffer->CopyToDevice();
-		clPrevposBuffer->CopyToDevice();
+		
 		magic_buffer->CopyToDevice();
 		clPosKernel->Run(256 * 256);
-		clPosBuffer->CopyFromDevice();
-		clPrevposBuffer->CopyFromDevice();
 		magic_buffer->CopyFromDevice();
 
 		magic += 0.0002f; // slowly increases the chance of anomalies
 		// apply constraints; 4 simulation steps: do not change this number.
 		for (int i = 0; i < 4; i++)
 		{
-			for (int y = 1; y < GRIDSIZE - 1; y++) for (int x = 1; x < GRIDSIZE - 1; x++)
-			{
-				float2 pointpos = { grid(x, y).pos.x,grid(x, y).pos.y };
-				// use springs to four neighbouring points
-				for (int linknr = 0; linknr < 4; linknr++)
-				{
-					Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
-					float distance = length(float2{ neighbour.pos.x,neighbour.pos.y } - pointpos);
-					if (!isfinite( distance ))
-					{
-						// warning: this happens; sometimes vertex positions 'explode'.
-						continue;
-					}
-					if (distance > grid( x, y ).restlength[linknr])
-					{
-						// pull points together
-						float extra = distance / (grid( x, y ).restlength[linknr]) - 1;
-						float2 dir = float2{ neighbour.pos.x,neighbour.pos.y } - pointpos;
-						pointpos += extra * dir * 0.5f;
-						neighbour.pos = float2{ neighbour.pos.x,neighbour.pos.y } - extra * dir * 0.5f;
-					}
-				}
-				grid( x, y ).pos = pointpos;
-			}
+			//for (int y = 1; y < GRIDSIZE - 1; y++) for (int x = 1; x < GRIDSIZE - 1; x++)
+			//{
+			//	float2 pointpos = { grid(x, y).pos.x,grid(x, y).pos.y };
+			//	// use springs to four neighbouring points
+			//	for (int linknr = 0; linknr < 4; linknr++)
+			//	{
+			//		Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
+			//		float distance = length(float2{ neighbour.pos.x,neighbour.pos.y } - pointpos);
+			//		if (!isfinite( distance ))
+			//		{
+			//			// warning: this happens; sometimes vertex positions 'explode'.
+			//			continue;
+			//		}
+			//		if (distance > grid( x, y ).restlength[linknr])
+			//		{
+			//			// pull points together
+			//			float extra = distance / (grid( x, y ).restlength[linknr]) - 1;
+			//			float2 dir = float2{ neighbour.pos.x,neighbour.pos.y } - pointpos;
+			//			pointpos += extra * dir * 0.5f;
+			//			neighbour.pos = float2{ neighbour.pos.x,neighbour.pos.y } - extra * dir * 0.5f;
+			//		}
+			//	}
+			//	grid( x, y ).pos = pointpos;
+			//}
+			clPos2Kernel->SetArguments(0);
+			clPos2Kernel->Run(128 * 128);
+			clPos2Kernel->SetArguments(1);
+			clPos2Kernel->Run(128 * 128);
+			clPos2Kernel->SetArguments(2);
+			clPos2Kernel->Run(128 * 128);
+			clPos2Kernel->SetArguments(3);
+			clPos2Kernel->Run(128 * 128);
 			// fixed line of points is fixed.
-			for (int x = 0; x < GRIDSIZE; x++) grid( x, 0 ).pos = grid( x, 0 ).fix;
+			//for (int x = 0; x < GRIDSIZE; x++) grid( x, 0 ).pos = grid( x, 0 ).fix;
+			clFixKernel->Run(256 * 256);
 		}
 	}
+	clPosBuffer->CopyFromDevice();
+	//clPrevposBuffer->CopyFromDevice();
 }
 
 void Game::Tick( float a_DT )
