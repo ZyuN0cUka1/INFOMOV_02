@@ -37,18 +37,18 @@
 // Also note that your final grade will be capped at 10.
 
 #define idx(x,y) ((x)+((y)<<8))
-#define set256(x) (_mm256_setr_ps((x)))
+#define idx8(x,y) (((x)<<3)+((y)<<7))
+#define set256(x) (_mm256_setr_ps((x),(x),(x),(x),(x),(x),(x),(x)))
 #define calidx(x) (((x) >> 1) | (((x) & 0x1) << 15))
 #define calidx8(x) ((((x) >> 1) | (((x) & 0x1) << 15)) >> 3)
 #define revidx(x) (((x) >> 15) | (((x) & 0x7fff) << 1))
 #define revidx8(x) ((((x) >> 15) | (((x) & 0x7fff) << 1)) >> 3)
-static union { float posx[GRIDSIZE * GRIDSIZE]; __m256 posx8[GRIDSIZE * GRIDSIZE / 8]; };
-static union { float posy[GRIDSIZE * GRIDSIZE]; __m256 posy8[GRIDSIZE * GRIDSIZE / 8]; };
-static union { float prev_posx[GRIDSIZE * GRIDSIZE]; __m256 prev_posx8[GRIDSIZE * GRIDSIZE / 8]; };
-static union { float prev_posy[GRIDSIZE * GRIDSIZE]; __m256 prev_posy8[GRIDSIZE * GRIDSIZE / 8]; };
-static union { float fixx[GRIDSIZE * GRIDSIZE]; __m256 fixx8[GRIDSIZE * GRIDSIZE / 8]; };
-static union { float fixy[GRIDSIZE * GRIDSIZE]; __m256 fixy8[GRIDSIZE * GRIDSIZE / 8]; };
-static union { float urest[4][GRIDSIZE * GRIDSIZE]; __m256 restlength8[4][GRIDSIZE * GRIDSIZE / 8]; };
+
+static union { float2 pos1[GRIDSIZE * GRIDSIZE]; float pos2[GRIDSIZE * GRIDSIZE * 2]; };
+static union { float2 prev_pos1[GRIDSIZE * GRIDSIZE]; float prev_pos2[GRIDSIZE * GRIDSIZE * 2]; };
+static union { float2 fix1[GRIDSIZE * GRIDSIZE]; float fix2[GRIDSIZE * GRIDSIZE * 2]; };
+static bool fixed1[GRIDSIZE * GRIDSIZE];
+static float restlength1[4][GRIDSIZE * GRIDSIZE];
 
 uint preidx = 0;
 
@@ -68,15 +68,15 @@ struct Pospoint {
 struct float_rest {
 	uint i;
 	float_rest(uint id) :i(id) {};
-	float& operator[](uint idx) { return urest[idx][i]; }
+	float& operator[](uint idx) { return restlength1[idx][i]; }
 };
 
 struct Point
 {
-	Pospoint pos{ posx[calidx(preidx)],posy[calidx(preidx)] };			// current position of the point
-	Pospoint prev_pos{ prev_posx[calidx(preidx)],prev_posy[calidx(preidx)] };		// position of the point in the previous frame
-	Pospoint fix{ fixx[calidx(preidx)],fixy[calidx(preidx)] };				// stationary position; used for the top line of points
-	bool fixed;				// true if this is a point in the top line of the cloth
+	Pospoint pos{ pos1[calidx(preidx)].x,pos1[calidx(preidx)].y };			// current position of the point
+	Pospoint prev_pos{ prev_pos1[calidx(preidx)].x,prev_pos1[calidx(preidx)].y };		// position of the point in the previous frame
+	Pospoint fix{ fix1[calidx(preidx)].x,fix1[calidx(preidx)].y };				// stationary position; used for the top line of points
+	bool& fixed = fixed1[calidx(preidx)];				// true if this is a point in the top line of the cloth
 	float_rest restlength{ preidx++ };	// initial distance to neighbours
 };
 
@@ -104,7 +104,17 @@ void Game::Init()
 	//((float*)&a28)[0] = 1;
 	//float out[8]; _mm256_store_ps(out, a28);
 	//cout << "a28:\t" << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
+
+	//Kernel::InitCL();
+
+	Kernel* clPosKernel = new Kernel("cl/kernels.cl", "render");
 	
+	//Buffer* clPosBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2);
+	//Buffer* clPrevPosBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2);
+	//Buffer* clFixBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2);
+
+	//clPosKernel->SetArguments(clPosBuffer, clPrevPosBuffer);
+
 	// create the cloth
 	for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
 	{

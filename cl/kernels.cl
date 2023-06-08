@@ -10,4 +10,12 @@ __kernel void render( __global uint* pixels, const int offset )
 	pixels[x + y * 512] = (red << 16) + (green << 8);
 }
 
+__kernel void update_positions( const float& magic, __global float* pos, __global float* curpos ) 
+{
+	const int p = get_global_id(0);
+	//const int seed = WangHash(p);
+	//const float r1 = RandomFloat(seed);
+}
+
+
 // EOF
