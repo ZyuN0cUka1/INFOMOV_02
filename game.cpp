@@ -172,8 +172,6 @@ __m256 truemask = _mm256_cmp_ps(_mm256_setr_ps(1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0
 
 void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint& x, const uint& y) {
 	uint i0 = y * 16 + x;
-	//__m256 ppsx = posx8[i0];
-	//__m256 ppsy = posy8[i0];
 	__m256 ppsx = *curx;
 	__m256 ppsy = *cury;
 	for (int linknr = 0; linknr < 4; linknr++)
@@ -182,40 +180,17 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 		__m256& nbrx = *((__m256*) & (posx[i]));
 		__m256& nbry = *((__m256*) & (posy[i]));
 
-		//float out[8]; _mm256_store_ps(out, nbrx);
-		//cout << "nbrx:\t" << i << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
-		//_mm256_store_ps(out, ppsx);
-		//cout << "ppsx:\t" << i0 << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
-
-
 		__m256 delx = _mm256_sub_ps(nbrx, ppsx);
 		__m256 dely = _mm256_sub_ps(nbry, ppsy);
 		__m256 dist = _mm256_sqrt_ps(_mm256_add_ps(_mm256_mul_ps(delx, delx), _mm256_mul_ps(dely, dely)));
-		float cmp[8] = {
-			fpclassify(((float*)&dist)[0]),
-			fpclassify(((float*)&dist)[1]),
-			fpclassify(((float*)&dist)[2]),
-			fpclassify(((float*)&dist)[3]),
-			fpclassify(((float*)&dist)[4]),
-			fpclassify(((float*)&dist)[5]),
-			fpclassify(((float*)&dist)[6]),
-			fpclassify(((float*)&dist)[7])
-		};
-		__m256 mask = _mm256_and_ps(_mask, _mm256_and_ps(
-			_mm256_cmp_ps(*((__m256*)cmp), _mm256_set1_ps(0.0f), _CMP_LE_OQ),
-			_mm256_cmp_ps(dist, restlength8[linknr][i0], _CMP_GT_OQ)));
+
+		__m256 cmp8 = _mm256_cmp_ps(dist, _mm256_set1_ps(numeric_limits<float>::infinity()), _CMP_NEQ_OQ);
+		__m256 mask = _mm256_and_ps(_mask, _mm256_and_ps(cmp8, _mm256_cmp_ps(dist, restlength8[linknr][i0], _CMP_GT_OQ)));
 
 		__m256 extra = _mm256_sub_ps(_mm256_div_ps(dist, restlength8[linknr][i0]), _mm256_set1_ps(1.0f));
 
 		__m256 dirx = _mm256_and_ps(mask, _mm256_mul_ps(_mm256_set1_ps(0.5f), _mm256_mul_ps(delx, extra)));
 		__m256 diry = _mm256_and_ps(mask, _mm256_mul_ps(_mm256_set1_ps(0.5f), _mm256_mul_ps(dely, extra)));
-
-
-		//float out[8]; _mm256_store_ps(out, mask);
-		////cout << "delx:curr\t" << revidx(i0 * 8) << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
-		//_mm256_store_ps(out, dist);
-		//cout << "dely:neig\t" << revidx(i) << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
-
 
 		ppsx = _mm256_add_ps(ppsx, dirx);
 		ppsy = _mm256_add_ps(ppsy, diry);
@@ -223,8 +198,6 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 		nbrx = _mm256_sub_ps(nbrx, dirx);
 		nbry = _mm256_sub_ps(nbry, diry);
 	}
-	//posx8[i0] = ppsx;
-	//posy8[i0] = ppsy;
 	*curx = ppsx;
 	*cury = ppsy;
 }
