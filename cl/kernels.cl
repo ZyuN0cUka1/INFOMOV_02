@@ -90,4 +90,13 @@ void Constraint( float& x, float& y, float* neighbour, const float& restlength )
 }
 uint CalfromXY( uint x, uint y ) { return x+y<<8; }
 
+__kernel void fix_point(__global bool* fixed,__global float* pos,__global float* fix)
+{
+	const int p = get_global_id(0);
+	if(fixed[p])
+	{
+		pos[p*2]=fix[p*2];
+		pos[p*2+1]=fix[p*2+1];
+	}
+}
 // EOF
