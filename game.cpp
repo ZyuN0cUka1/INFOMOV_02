@@ -179,22 +179,16 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 		uint i = calidx(revidx(i0 * 8) + xoffset[linknr] + yoffset[linknr] * GRIDSIZE);
 		__m256& nbrx = *((__m256*) & (posx[i]));
 		__m256& nbry = *((__m256*) & (posy[i]));
-
 		__m256 delx = _mm256_sub_ps(nbrx, ppsx);
 		__m256 dely = _mm256_sub_ps(nbry, ppsy);
 		__m256 dist = _mm256_sqrt_ps(_mm256_add_ps(_mm256_mul_ps(delx, delx), _mm256_mul_ps(dely, dely)));
-
 		__m256 cmp8 = _mm256_cmp_ps(dist, _mm256_set1_ps(numeric_limits<float>::infinity()), _CMP_NEQ_OQ);
 		__m256 mask = _mm256_and_ps(_mask, _mm256_and_ps(cmp8, _mm256_cmp_ps(dist, restlength8[linknr][i0], _CMP_GT_OQ)));
-
 		__m256 extra = _mm256_sub_ps(_mm256_div_ps(dist, restlength8[linknr][i0]), _mm256_set1_ps(1.0f));
-
 		__m256 dirx = _mm256_and_ps(mask, _mm256_mul_ps(_mm256_set1_ps(0.5f), _mm256_mul_ps(delx, extra)));
 		__m256 diry = _mm256_and_ps(mask, _mm256_mul_ps(_mm256_set1_ps(0.5f), _mm256_mul_ps(dely, extra)));
-
 		ppsx = _mm256_add_ps(ppsx, dirx);
 		ppsy = _mm256_add_ps(ppsy, diry);
-
 		nbrx = _mm256_sub_ps(nbrx, dirx);
 		nbry = _mm256_sub_ps(nbry, diry);
 	}
@@ -251,31 +245,6 @@ void Game::Simulation()
 
 		for (int i = 0; i < 4; i++)
 		{
-			//for (int y = 1; y < GRIDSIZE - 1; y++) for (int x = 1; x < GRIDSIZE - 1; x++)
-			//{
-			//	float2 pointpos = { grid(x, y).pos.x,grid(x, y).pos.y };
-			//	// use springs to four neighbouring points
-			//	for (int linknr = 0; linknr < 4; linknr++)
-			//	{
-			//		Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
-			//		float distance = length(float2{ neighbour.pos.x,neighbour.pos.y } - pointpos);
-			//		if (!isfinite( distance ))
-			//		{
-			//			// warning: this happens; sometimes vertex positions 'explode'.
-			//			continue;
-			//		}
-			//		if (distance > grid( x, y ).restlength[linknr])
-			//		{
-			//			// pull points together
-			//			float extra = distance / (grid( x, y ).restlength[linknr]) - 1;
-			//			float2 dir = float2{ neighbour.pos.x,neighbour.pos.y } - pointpos;
-			//			pointpos += extra * dir * 0.5f;
-			//			neighbour.pos = float2{ neighbour.pos.x,neighbour.pos.y } - extra * dir * 0.5f;
-			//		}
-			//	}
-			//	grid( x, y ).pos = pointpos;
-			//}
-
 			//------------------avx
 			__m256* curx = posx8 + 128 / 8;
 			__m256* cury = posy8 + 128 / 8;
@@ -307,8 +276,6 @@ void Game::Simulation()
 				cury++;
 			}
 			//------------------avx
-
-			// fixed line of points is fixed.
 			for (int x = 0; x < GRIDSIZE; x++) grid(x, 0).pos = grid(x, 0).fix;
 		}
 	}
