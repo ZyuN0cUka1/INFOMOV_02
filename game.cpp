@@ -203,7 +203,7 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 			fpclassify(((float*)&dist)[7])
 		};
 		__m256 mask = _mm256_and_ps(_mask, _mm256_and_ps(
-			_mm256_cmp_ps(*((__m256*)cmp), _mm256_set1_ps(0.0f), _CMP_LE_OQ),
+			_mm256_cmp_ps(*((__m256*)cmp), _mm256_set1_ps(0.0f), _CMP_GT_OQ),
 			_mm256_cmp_ps(dist, restlength8[linknr][y * 128 / 8 + x], _CMP_GT_OQ)));
 		__m256 extra = _mm256_sub_ps(_mm256_div_ps(dist, restlength8[linknr][y * 128 / 8 + x]), _mm256_set1_ps(1.0f));
 		__m256 dirx = _mm256_and_ps(mask, _mm256_mul_ps(delx, _mm256_set1_ps(0.5)));
@@ -211,7 +211,7 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 
 
 		//float out[8]; _mm256_store_ps(out, mask);
-		//cout << "delx:curr\t" << revidx(i0 * 8) << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
+		////cout << "delx:curr\t" << revidx(i0 * 8) << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
 		//_mm256_store_ps(out, dist);
 		//cout << "dely:neig\t" << revidx(i) << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
 
@@ -274,61 +274,61 @@ void Game::Simulation()
 
 		for (int i = 0; i < 4; i++)
 		{
-			for (int y = 1; y < GRIDSIZE - 1; y++) for (int x = 1; x < GRIDSIZE - 1; x++)
-			{
-				float2 pointpos = { grid(x, y).pos.x,grid(x, y).pos.y };
-				// use springs to four neighbouring points
-				for (int linknr = 0; linknr < 4; linknr++)
-				{
-					Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
-					float distance = length(float2{ neighbour.pos.x,neighbour.pos.y } - pointpos);
-					if (!isfinite( distance ))
-					{
-						// warning: this happens; sometimes vertex positions 'explode'.
-						continue;
-					}
-					if (distance > grid( x, y ).restlength[linknr])
-					{
-						// pull points together
-						float extra = distance / (grid( x, y ).restlength[linknr]) - 1;
-						float2 dir = float2{ neighbour.pos.x,neighbour.pos.y } - pointpos;
-						pointpos += extra * dir * 0.5f;
-						neighbour.pos = float2{ neighbour.pos.x,neighbour.pos.y } - extra * dir * 0.5f;
-					}
-				}
-				grid( x, y ).pos = pointpos;
-			}
+			//for (int y = 1; y < GRIDSIZE - 1; y++) for (int x = 1; x < GRIDSIZE - 1; x++)
+			//{
+			//	float2 pointpos = { grid(x, y).pos.x,grid(x, y).pos.y };
+			//	// use springs to four neighbouring points
+			//	for (int linknr = 0; linknr < 4; linknr++)
+			//	{
+			//		Point& neighbour = grid( x + xoffset[linknr], y + yoffset[linknr] );
+			//		float distance = length(float2{ neighbour.pos.x,neighbour.pos.y } - pointpos);
+			//		if (!isfinite( distance ))
+			//		{
+			//			// warning: this happens; sometimes vertex positions 'explode'.
+			//			continue;
+			//		}
+			//		if (distance > grid( x, y ).restlength[linknr])
+			//		{
+			//			// pull points together
+			//			float extra = distance / (grid( x, y ).restlength[linknr]) - 1;
+			//			float2 dir = float2{ neighbour.pos.x,neighbour.pos.y } - pointpos;
+			//			pointpos += extra * dir * 0.5f;
+			//			neighbour.pos = float2{ neighbour.pos.x,neighbour.pos.y } - extra * dir * 0.5f;
+			//		}
+			//	}
+			//	grid( x, y ).pos = pointpos;
+			//}
 
 			//------------------avx
-			//__m256* curx = posx8 + 128 / 8;
-			//__m256* cury = posy8 + 128 / 8;
-			//for (int y = 1; y < GRIDSIZE - 1; y++)
-			//{
-			//	cal_dir(curx, cury, xe00mask, 0, y);
-			//	curx++;
-			//	cury++;
-			//	for (int x = 1; x < GRIDSIZE / 16; x++)
-			//	{
-			//		cal_dir(curx, cury, truemask, x, y);
-			//		curx++;
-			//		cury++;
-			//	}
-			//}
-			//curx += 128 * 2 / 8;
-			//cury += 128 * 2 / 8;
-			//for (int y = GRIDSIZE + 1; y < GRIDSIZE * 2 - 1; y++)
-			//{
-			//	for (int x = 0; x < GRIDSIZE / 16 - 1; x++)
-			//	{
-			//		cal_dir(curx, cury, truemask, x, y);
-			//		curx++;
-			//		cury++;
-			//	}
-			//	
-			//	cal_dir(curx, cury, xeffmask, GRIDSIZE / 16 - 1, y);
-			//	curx++;
-			//	cury++;
-			//}
+			__m256* curx = posx8 + 128 / 8;
+			__m256* cury = posy8 + 128 / 8;
+			for (int y = 1; y < GRIDSIZE - 1; y++)
+			{
+				cal_dir(curx, cury, xe00mask, 0, y);
+				curx++;
+				cury++;
+				for (int x = 1; x < GRIDSIZE / 16; x++)
+				{
+					cal_dir(curx, cury, truemask, x, y);
+					curx++;
+					cury++;
+				}
+			}
+			curx += 128 * 2 / 8;
+			cury += 128 * 2 / 8;
+			for (int y = GRIDSIZE + 1; y < GRIDSIZE * 2 - 1; y++)
+			{
+				for (int x = 0; x < GRIDSIZE / 16 - 1; x++)
+				{
+					cal_dir(curx, cury, truemask, x, y);
+					curx++;
+					cury++;
+				}
+				
+				cal_dir(curx, cury, xeffmask, GRIDSIZE / 16 - 1, y);
+				curx++;
+				cury++;
+			}
 			//------------------avx
 
 			// fixed line of points is fixed.
