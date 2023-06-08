@@ -37,8 +37,6 @@
 // Also note that your final grade will be capped at 10.
 
 #define idx(x,y) ((x)+((y)<<8))
-#define calidx(x) (((x) >> 1) | (((x) & 0x1) << 15))
-#define revidx(x) (((x) >> 15) | (((x) & 0x7fff) << 1))
 
 static union { float2 pos1[GRIDSIZE * GRIDSIZE]; float pos2[GRIDSIZE * GRIDSIZE * 2]; };
 static union { float2 prev_pos1[GRIDSIZE * GRIDSIZE]; float prev_pos2[GRIDSIZE * GRIDSIZE * 2]; };
@@ -54,7 +52,8 @@ static Buffer* clPrevposBuffer = 0;
 static Buffer* clFixBuffer = 0;
 static Buffer* clFixflagBuffer = 0;
 static Buffer* clRestBuffer[4] = { 0,0,0,0 };
-
+static Buffer* magic_buffer = 0;
+float magic = 0.11f;
 uint preidx = 0;
 
 struct Pospoint {
@@ -78,11 +77,11 @@ struct float_rest {
 
 struct Point
 {
-	Pospoint pos{ pos1[calidx(preidx)].x,pos1[calidx(preidx)].y };			// current position of the point
-	Pospoint prev_pos{ prev_pos1[calidx(preidx)].x,prev_pos1[calidx(preidx)].y };		// position of the point in the previous frame
-	Pospoint fix{ fix1[calidx(preidx)].x,fix1[calidx(preidx)].y };				// stationary position; used for the top line of points
-	bool& fixed = fixed1[calidx(preidx)];				// true if this is a point in the top line of the cloth
-	float_rest restlength{ calidx(preidx) };	// initial distance to neighbours
+	Pospoint pos{ pos1[preidx].x,pos1[preidx].y };			// current position of the point
+	Pospoint prev_pos{ prev_pos1[preidx].x,prev_pos1[preidx].y };		// position of the point in the previous frame
+	Pospoint fix{ fix1[preidx].x,fix1[preidx].y };				// stationary position; used for the top line of points
+	bool& fixed = fixed1[preidx];				// true if this is a point in the top line of the cloth
+	float_rest restlength{ preidx };	// initial distance to neighbours
 	const uint i = preidx++;
 };
 
@@ -107,19 +106,19 @@ void Game::Init()
 {
 
 	clPosKernel = new Kernel("cl/kernels.cl", "update_positions");
-	clPos2Kernel = new Kernel("cl/kernels.cl", "update_positions2");
+	//clPos2Kernel = new Kernel("cl/kernels.cl", "update_positions2");
 
-	clPosBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &pos1);
-	clPrevposBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &prev_pos1);
+	clPosBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &pos2);
+	clPrevposBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &prev_pos2);
 	clFixBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &fix1);
 	clFixflagBuffer = new Buffer(sizeof(bool) * GRIDSIZE * GRIDSIZE, &fixed1);
 	clRestBuffer[0] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[0]);
 	clRestBuffer[1] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[1]);
 	clRestBuffer[2] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[2]);
 	clRestBuffer[3] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[3]);
-
-	clPosKernel->SetArguments(clPosBuffer, clPrevposBuffer);
-	clPos2Kernel->SetArguments(0, clPosBuffer, clFixflagBuffer, clFixBuffer, clRestBuffer[0], clRestBuffer[1], clRestBuffer[2], clRestBuffer[3]);
+	magic_buffer = new Buffer(sizeof(float), &magic, 0);
+	clPosKernel->SetArguments(clPosBuffer, clPrevposBuffer, magic_buffer->GetDevicePtr());
+	//clPos2Kernel->SetArguments(0, clPosBuffer, clFixflagBuffer, clFixBuffer, clRestBuffer[0], clRestBuffer[1], clRestBuffer[2], clRestBuffer[3]);
 
 	// create the cloth
 	for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
@@ -178,20 +177,27 @@ void Game::DrawGrid()
 // drawn together to restore the rest length. When running on the GPU or
 // when using SIMD, this will only work if the two vertices are not
 // operated upon simultaneously (in a vector register, or in a warp).
-float magic = 0.11f;
+//float magic = 0.11f;
 void Game::Simulation()
 {
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ )
 	{
 		// verlet integration; apply gravity
-		for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
-		{
-			float2 curpos{ grid(x, y).pos.x,grid(x, y).pos.y }, prevpos{ grid(x, y).prev_pos.x,grid(x, y).prev_pos.y };
-			grid(x, y).pos = curpos + (curpos - prevpos) + float2(0, 0.003f); // gravity
-			grid( x, y ).prev_pos = curpos;
-			if (Rand(10) < 0.03f) grid(x, y).pos = float2{ grid(x, y).pos.x,grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
-		}
+		//for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
+		//{
+		//	float2 curpos{ grid(x, y).pos.x,grid(x, y).pos.y }, prevpos{ grid(x, y).prev_pos.x,grid(x, y).prev_pos.y };
+		//	grid(x, y).pos = curpos + (curpos - prevpos) + float2(0, 0.003f); // gravity
+		//	grid( x, y ).prev_pos = curpos;
+		//	if (Rand(10) < 0.03f) grid(x, y).pos = float2{ grid(x, y).pos.x,grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
+		//}
+		clPosBuffer->CopyToDevice();
+		clPrevposBuffer->CopyToDevice();
+		magic_buffer->CopyToDevice();
+		clPosKernel->Run(256 * 256);
+		clPosBuffer->CopyFromDevice();
+		clPrevposBuffer->CopyFromDevice();
+		magic_buffer->CopyFromDevice();
 
 		magic += 0.0002f; // slowly increases the chance of anomalies
 		// apply constraints; 4 simulation steps: do not change this number.
