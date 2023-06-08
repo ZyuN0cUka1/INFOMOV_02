@@ -78,7 +78,8 @@ struct Point
 	Pospoint prev_pos{ prev_posx[calidx(preidx)],prev_posy[calidx(preidx)] };		// position of the point in the previous frame
 	Pospoint fix{ fixx[calidx(preidx)],fixy[calidx(preidx)] };				// stationary position; used for the top line of points
 	bool fixed;				// true if this is a point in the top line of the cloth
-	float_rest restlength{ preidx++ };	// initial distance to neighbours
+	float_rest restlength{ calidx(preidx) };	// initial distance to neighbours
+	const uint id = preidx++;
 };
 
 //struct Point
@@ -128,7 +129,7 @@ void Game::Init()
 		for (int c = 0; c < 4; c++)
 		{
 			float2 rest{ grid(x, y).pos.x - grid(x + xoffset[c], y + yoffset[c]).pos.x,grid(x, y).pos.y - grid(x + xoffset[c], y + yoffset[c]).pos.y };
-			grid(x, y).restlength[c] = length(rest) * 1.15f;
+			urest[c][calidx(idx(x, y))] = length(rest) * 1.15f;
 		}
 	}
 }
@@ -168,8 +169,6 @@ __m256 gy = _mm256_set1_ps(0.003f);
 __m256 xe00mask = _mm256_cmp_ps(_mm256_setr_ps(0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f), _mm256_set1_ps(0.0f), _CMP_GT_OQ);
 __m256 xeffmask = _mm256_cmp_ps(_mm256_setr_ps(1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f), _mm256_set1_ps(0.0f), _CMP_GT_OQ);
 __m256 truemask = _mm256_cmp_ps(_mm256_setr_ps(1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f), _mm256_set1_ps(0.0f), _CMP_GT_OQ);
-int o8s0[4] = { 128 * 256 / 8, 128 * 256 / 8 - 1, 128 / 8, -128 / 8 };
-int o8s1[4] = { 1 - 128 * 256 / 8, -128 * 256 / 8, 128 / 8, -128 / 8 };
 
 void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint& x, const uint& y) {
 	uint i0 = y * 16 + x;
@@ -180,8 +179,8 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 	for (int linknr = 0; linknr < 4; linknr++)
 	{
 		uint i = calidx(revidx(i0 * 8) + xoffset[linknr] + yoffset[linknr] * GRIDSIZE);
-		__m256& nbrx = *((__m256*) & posx[i]);
-		__m256& nbry = *((__m256*) & posy[i]);
+		__m256& nbrx = *((__m256*) & (posx[i]));
+		__m256& nbry = *((__m256*) & (posy[i]));
 
 		//float out[8]; _mm256_store_ps(out, nbrx);
 		//cout << "nbrx:\t" << i << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
@@ -189,8 +188,8 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 		//cout << "ppsx:\t" << i0 << "\t" << x << "\t" << y << '\t' << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
 
 
-		__m256 delx = _mm256_sub_ps(nbrx, *curx);
-		__m256 dely = _mm256_sub_ps(nbry, *cury);
+		__m256 delx = _mm256_sub_ps(nbrx, ppsx);
+		__m256 dely = _mm256_sub_ps(nbry, ppsy);
 		__m256 dist = _mm256_sqrt_ps(_mm256_add_ps(_mm256_mul_ps(delx, delx), _mm256_mul_ps(dely, dely)));
 		float cmp[8] = {
 			fpclassify(((float*)&dist)[0]),
@@ -203,11 +202,13 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 			fpclassify(((float*)&dist)[7])
 		};
 		__m256 mask = _mm256_and_ps(_mask, _mm256_and_ps(
-			_mm256_cmp_ps(*((__m256*)cmp), _mm256_set1_ps(0.0f), _CMP_GT_OQ),
-			_mm256_cmp_ps(dist, restlength8[linknr][y * 128 / 8 + x], _CMP_GT_OQ)));
-		__m256 extra = _mm256_sub_ps(_mm256_div_ps(dist, restlength8[linknr][y * 128 / 8 + x]), _mm256_set1_ps(1.0f));
-		__m256 dirx = _mm256_and_ps(mask, _mm256_mul_ps(delx, _mm256_set1_ps(0.5)));
-		__m256 diry = _mm256_and_ps(mask, _mm256_mul_ps(dely, _mm256_set1_ps(0.5)));
+			_mm256_cmp_ps(*((__m256*)cmp), _mm256_set1_ps(0.0f), _CMP_LE_OQ),
+			_mm256_cmp_ps(dist, restlength8[linknr][i0], _CMP_GT_OQ)));
+
+		__m256 extra = _mm256_sub_ps(_mm256_div_ps(dist, restlength8[linknr][i0]), _mm256_set1_ps(1.0f));
+
+		__m256 dirx = _mm256_and_ps(mask, _mm256_mul_ps(_mm256_set1_ps(0.5f), _mm256_mul_ps(delx, extra)));
+		__m256 diry = _mm256_and_ps(mask, _mm256_mul_ps(_mm256_set1_ps(0.5f), _mm256_mul_ps(dely, extra)));
 
 
 		//float out[8]; _mm256_store_ps(out, mask);
@@ -218,11 +219,14 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 
 		ppsx = _mm256_add_ps(ppsx, dirx);
 		ppsy = _mm256_add_ps(ppsy, diry);
+
 		nbrx = _mm256_sub_ps(nbrx, dirx);
 		nbry = _mm256_sub_ps(nbry, diry);
 	}
-	posx8[i0] = ppsx;
-	posy8[i0] = ppsy;
+	//posx8[i0] = ppsx;
+	//posy8[i0] = ppsy;
+	*curx = ppsx;
+	*cury = ppsy;
 }
 
 void Game::Simulation()
