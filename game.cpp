@@ -37,18 +37,23 @@
 // Also note that your final grade will be capped at 10.
 
 #define idx(x,y) ((x)+((y)<<8))
-#define idx8(x,y) (((x)<<3)+((y)<<7))
-#define set256(x) (_mm256_setr_ps((x),(x),(x),(x),(x),(x),(x),(x)))
 #define calidx(x) (((x) >> 1) | (((x) & 0x1) << 15))
-#define calidx8(x) ((((x) >> 1) | (((x) & 0x1) << 15)) >> 3)
 #define revidx(x) (((x) >> 15) | (((x) & 0x7fff) << 1))
-#define revidx8(x) ((((x) >> 15) | (((x) & 0x7fff) << 1)) >> 3)
 
 static union { float2 pos1[GRIDSIZE * GRIDSIZE]; float pos2[GRIDSIZE * GRIDSIZE * 2]; };
 static union { float2 prev_pos1[GRIDSIZE * GRIDSIZE]; float prev_pos2[GRIDSIZE * GRIDSIZE * 2]; };
 static union { float2 fix1[GRIDSIZE * GRIDSIZE]; float fix2[GRIDSIZE * GRIDSIZE * 2]; };
 static bool fixed1[GRIDSIZE * GRIDSIZE];
 static float restlength1[4][GRIDSIZE * GRIDSIZE];
+
+static Kernel* clPosKernel = 0;
+static Kernel* clPos2Kernel = 0;
+
+static Buffer* clPosBuffer = 0;
+static Buffer* clPrevposBuffer = 0;
+static Buffer* clFixBuffer = 0;
+static Buffer* clFixflagBuffer = 0;
+static Buffer* clRestBuffer[4] = { 0,0,0,0 };
 
 uint preidx = 0;
 
@@ -77,7 +82,8 @@ struct Point
 	Pospoint prev_pos{ prev_pos1[calidx(preidx)].x,prev_pos1[calidx(preidx)].y };		// position of the point in the previous frame
 	Pospoint fix{ fix1[calidx(preidx)].x,fix1[calidx(preidx)].y };				// stationary position; used for the top line of points
 	bool& fixed = fixed1[calidx(preidx)];				// true if this is a point in the top line of the cloth
-	float_rest restlength{ preidx++ };	// initial distance to neighbours
+	float_rest restlength{ calidx(preidx) };	// initial distance to neighbours
+	const uint i = preidx++;
 };
 
 //struct Point
@@ -99,21 +105,21 @@ int xoffset[4] = { 1, -1, 0, 0 }, yoffset[4] = { 0, 0, 1, -1 };
 // initialization
 void Game::Init()
 {
-	//float a[9] = { 1,2,3,4,5,6,7,8,9 };
-	//__m256& a28 = *((__m256*) & a[1]);
-	//((float*)&a28)[0] = 1;
-	//float out[8]; _mm256_store_ps(out, a28);
-	//cout << "a28:\t" << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
 
-	//Kernel::InitCL();
+	clPosKernel = new Kernel("cl/kernels.cl", "update_positions");
+	clPos2Kernel = new Kernel("cl/kernels.cl", "update_positions2");
 
-	Kernel* clPosKernel = new Kernel("cl/kernels.cl", "render");
-	
-	//Buffer* clPosBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2);
-	//Buffer* clPrevPosBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2);
-	//Buffer* clFixBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2);
+	clPosBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &pos1);
+	clPrevposBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &prev_pos1);
+	clFixBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &fix1);
+	clFixflagBuffer = new Buffer(sizeof(bool) * GRIDSIZE * GRIDSIZE, &fixed1);
+	clRestBuffer[0] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[0]);
+	clRestBuffer[1] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[1]);
+	clRestBuffer[2] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[2]);
+	clRestBuffer[3] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[3]);
 
-	//clPosKernel->SetArguments(clPosBuffer, clPrevPosBuffer);
+	clPosKernel->SetArguments(clPosBuffer, clPrevposBuffer);
+	clPos2Kernel->SetArguments(0, clPosBuffer, clFixflagBuffer, clFixBuffer, clRestBuffer[0], clRestBuffer[1], clRestBuffer[2], clRestBuffer[3]);
 
 	// create the cloth
 	for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
@@ -186,8 +192,6 @@ void Game::Simulation()
 			grid( x, y ).prev_pos = curpos;
 			if (Rand(10) < 0.03f) grid(x, y).pos = float2{ grid(x, y).pos.x,grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
 		}
-
-
 
 		magic += 0.0002f; // slowly increases the chance of anomalies
 		// apply constraints; 4 simulation steps: do not change this number.
