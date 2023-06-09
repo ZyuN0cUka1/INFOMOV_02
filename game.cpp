@@ -43,6 +43,7 @@
 #define calidx8(x) ((((x) >> 1) | (((x) & 0x1) << 15)) >> 3)
 #define revidx(x) (((x) >> 15) | (((x) & 0x7fff) << 1))
 #define revidx8(x) ((((x) >> 15) | (((x) & 0x7fff) << 1)) >> 3)
+
 static union { float posx[GRIDSIZE * GRIDSIZE]; __m256 posx8[GRIDSIZE * GRIDSIZE / 8]; };
 static union { float posy[GRIDSIZE * GRIDSIZE]; __m256 posy8[GRIDSIZE * GRIDSIZE / 8]; };
 static union { float prev_posx[GRIDSIZE * GRIDSIZE]; __m256 prev_posx8[GRIDSIZE * GRIDSIZE / 8]; };
@@ -74,22 +75,13 @@ struct float_rest {
 
 struct Point
 {
-	Pospoint pos{ posx[calidx(preidx)],posy[calidx(preidx)] };			// current position of the point
-	Pospoint prev_pos{ prev_posx[calidx(preidx)],prev_posy[calidx(preidx)] };		// position of the point in the previous frame
-	Pospoint fix{ fixx[calidx(preidx)],fixy[calidx(preidx)] };				// stationary position; used for the top line of points
-	bool fixed;				// true if this is a point in the top line of the cloth
-	float_rest restlength{ calidx(preidx) };	// initial distance to neighbours
+	Pospoint pos{ posx[calidx(preidx)],posy[calidx(preidx)] };					// current position of the point
+	Pospoint prev_pos{ prev_posx[calidx(preidx)],prev_posy[calidx(preidx)] };	// position of the point in the previous frame
+	Pospoint fix{ fixx[calidx(preidx)],fixy[calidx(preidx)] };					// stationary position; used for the top line of points
+	bool fixed;																	// true if this is a point in the top line of the cloth
+	float_rest restlength{ calidx(preidx) };									// initial distance to neighbours
 	const uint id = preidx++;
 };
-
-//struct Point
-//{
-//	float2 pos;
-//	float2 prev_pos;
-//	float2 fix;
-//	bool fixed;
-//	float restlength[4];
-//};
 
 // grid access convenience
 Point* pointGrid = new Point[GRIDSIZE * GRIDSIZE];
@@ -101,12 +93,6 @@ int xoffset[4] = { 1, -1, 0, 0 }, yoffset[4] = { 0, 0, 1, -1 };
 // initialization
 void Game::Init()
 {
-	//float a[9] = { 1,2,3,4,5,6,7,8,9 };
-	//__m256& a28 = *((__m256*) & a[1]);
-	//((float*)&a28)[0] = 1;
-	//float out[8]; _mm256_store_ps(out, a28);
-	//cout << "a28:\t" << out[0] << '\t' << out[1] << '\t' << out[2] << '\t' << out[3] << '\t' << out[4] << '\t' << out[5] << '\t' << out[6] << '\t' << out[7] << endl;
-	
 	// create the cloth
 	for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
 	{
@@ -182,8 +168,10 @@ void inline cal_dir(__m256* curx, __m256* cury, const __m256& _mask, const uint&
 		__m256 delx = _mm256_sub_ps(nbrx, ppsx);
 		__m256 dely = _mm256_sub_ps(nbry, ppsy);
 		__m256 dist = _mm256_sqrt_ps(_mm256_add_ps(_mm256_mul_ps(delx, delx), _mm256_mul_ps(dely, dely)));
-		__m256 cmp8 = _mm256_cmp_ps(dist, _mm256_set1_ps(numeric_limits<float>::infinity()), _CMP_NEQ_OQ);
-		__m256 mask = _mm256_and_ps(_mask, _mm256_and_ps(cmp8, _mm256_cmp_ps(dist, restlength8[linknr][i0], _CMP_GT_OQ)));
+		__m256 mask0 = _mm256_cmp_ps(dist, _mm256_set1_ps(numeric_limits<float>::infinity()), _CMP_NEQ_OQ);
+		//__m256 mask1 = _mm256_cmp_ps(dist, _mm256_set1_ps(numeric_limits<float>::quiet_NaN()), _CMP_NEQ_OQ);
+		__m256 mask = _mm256_and_ps(_mask, _mm256_and_ps(mask0, _mm256_cmp_ps(dist, restlength8[linknr][i0], _CMP_GT_OQ)));
+		//__m256 mask = _mm256_and_ps(_mask, _mm256_and_ps(_mm256_and_ps(mask0, mask1), _mm256_cmp_ps(dist, restlength8[linknr][i0], _CMP_GT_OQ)));
 		__m256 extra = _mm256_sub_ps(_mm256_div_ps(dist, restlength8[linknr][i0]), _mm256_set1_ps(1.0f));
 		__m256 dirx = _mm256_and_ps(mask, _mm256_mul_ps(_mm256_set1_ps(0.5f), _mm256_mul_ps(delx, extra)));
 		__m256 diry = _mm256_and_ps(mask, _mm256_mul_ps(_mm256_set1_ps(0.5f), _mm256_mul_ps(dely, extra)));
@@ -201,15 +189,6 @@ void Game::Simulation()
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ )
 	{
-		// verlet integration; apply gravity
-		//for (int y = 0; y < GRIDSIZE; y++) for (int x = 0; x < GRIDSIZE; x++)
-		//{
-		//	float2 curpos{ grid(x, y).pos.x,grid(x, y).pos.y }, prevpos{ grid(x, y).prev_pos.x,grid(x, y).prev_pos.y };
-		//	grid(x, y).pos = curpos + (curpos - prevpos) + float2(0, 0.003f); // gravity
-		//	grid( x, y ).prev_pos = curpos;
-		//	if (Rand(10) < 0.03f) grid(x, y).pos = float2{ grid(x, y).pos.x,grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
-		//}
-
 		//------------------avx
 		__m256* curx = posx8;
 		__m256* cury = posy8;
