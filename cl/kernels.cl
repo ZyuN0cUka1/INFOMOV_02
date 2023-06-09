@@ -10,7 +10,7 @@ __kernel void render( __global uint* pixels, const int offset )
 	pixels[x + y * 512] = (red << 16) + (green << 8);
 }
 
-__kernel void update_positions(__global float* curpos, __global float* prevpos, __global float* magic)
+__kernel void update_positions( const float magic,__global float* curpos, __global float* prevpos)
 {
 	int p = get_global_id(0);
 	uint seed = WangHash(p);
@@ -36,31 +36,47 @@ __kernel void update_positions(__global float* curpos, __global float* prevpos, 
 	//grid(x, y).pos = float2{ grid(x, y).pos.x, grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
 
 	if (10 * r1 < 0.03f) {
-		curpos[2 * p] = curpos[2 * p] + (0.02f+*magic) * r2;
+		curpos[2 * p] = curpos[2 * p] + (0.02f+magic) * r2;
 		curpos[2 * p + 1] = curpos[2 * p + 1] + 0.12f * r3;
 	}
 
 }
 
 //__kernel void update_positions2( )
-__kernel void update_positions2(const int _flag, __global float* pos, __global bool* fixflag,	__global float* fixpos,__global float* restright,	__global float* restleft,	__global float* restup,	__global float* restdown)
+__kernel void update_positions2(const int _flag, __global float* pos,__global float* restright,	__global float* restleft,	__global float* restup,	__global float* restdown)
 {
-	int p = get_global_id(0);
-	uint ix = ((p&0x7f)<<1)|(_flag&0x1);
-	uint iy = ((p&0x3f80)>>6)|((_flag>>1)&0x1);
-	uint idx = CalfromXY(ix,iy);
-	uint idxright = CalfromXY(ix+1,iy);
-	uint idxleft = CalfromXY(ix-1,iy);
-	uint idxup = CalfromXY(ix,iy+1);
-	uint idxdown = CalfromXY(ix,iy-1);
+	const uint p = get_global_id(0);
+	const int xoffset[4] = { 1, -1, 0, 0 }, yoffset[4] = { 0, 0, 1, -1 };
+	const uint ix = ((p&0x7f)<<1)+(_flag&0x1);
+	const uint iy = ((p>>6)&0xfe)+((_flag>>1)&0x1);
+	const uint idx = CalfromXY(ix,iy);
+	const uint r[4] = {restright[idx],restleft[idx],restup[idx],restdown[idx]};
 	
+	if((ix==0)|(iy==0)|(ix==255)|(iy==255)) return;
+
 	float x = pos[idx*2];
 	float y = pos[idx*2+1];
 	
-	Constraint(&x,&y,&pos[idxright*2]	,&pos[idxright*2+1]	,restright[idxright]	);
-	Constraint(&x,&y,&pos[idxleft*2]	,&pos[idxleft*2+1]	,restleft[idxleft]	);
-	Constraint(&x,&y,&pos[idxup*2]		,&pos[idxup*2+1]	,restup[idxup]	);
-	Constraint(&x,&y,&pos[idxdown*2]	,&pos[idxdown*2+1]	,restdown[idxdown]	);
+	float delx = 0;
+	float dely = 0;
+	float dist = 0;
+	float extra = 0;
+	uint id = 0;
+
+	for (int i=0;i<4;i++)
+	{
+		id = CalfromXY(ix+xoffset[i],iy+yoffset[i]);
+		delx = pos[id*2]-x;
+		dely = pos[id*2+1]-y;
+		dist = sqrt(delx*delx+dely*dely);
+		if(!isfinite(dist)) continue;
+		if(dist<=r[i]) continue;
+		extra = dist/r[i]-1;
+		x += 0.5*delx*extra;
+		pos[id*2] -= 0.5*delx*extra;
+		y += 0.5*dely*extra;
+		pos[id*2+1] -= 0.5*dely*extra;
+	}
 	
 	pos[idx*2] = x;
 	pos[idx*2+1] = y;

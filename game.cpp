@@ -52,7 +52,10 @@ static Buffer* clPosBuffer = 0;
 static Buffer* clPrevposBuffer = 0;
 static Buffer* clFixBuffer = 0;
 static Buffer* clFixflagBuffer = 0;
-static Buffer* clRestBuffer[4] = { 0,0,0,0 };
+static Buffer* clRestBuffer0 = 0;
+static Buffer* clRestBuffer1 = 0;
+static Buffer* clRestBuffer2 = 0;
+static Buffer* clRestBuffer3 = 0;
 static Buffer* magic_buffer = 0;
 static Buffer* flag_buffer = 0;
 float magic = 0.11f;
@@ -88,14 +91,6 @@ struct Point
 	const uint i = preidx++;
 };
 
-//struct Point
-//{
-//	float2 pos;
-//	float2 prev_pos;
-//	float2 fix;
-//	bool fixed;
-//	float restlength[4];
-//};
 
 // grid access convenience
 Point* pointGrid = new Point[GRIDSIZE * GRIDSIZE];
@@ -117,16 +112,13 @@ void Game::Init()
 
 	clFixBuffer = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE * 2, &fix1);
 	clFixflagBuffer = new Buffer(sizeof(bool) * GRIDSIZE * GRIDSIZE, &fixed1);
-	clRestBuffer[0] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[0]);
-	clRestBuffer[1] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[1]);
-	clRestBuffer[2] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[2]);
-	clRestBuffer[3] = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[3]);
+	clRestBuffer0 = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[0]);
+	clRestBuffer1 = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[1]);
+	clRestBuffer2 = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[2]);
+	clRestBuffer3 = new Buffer(sizeof(float) * GRIDSIZE * GRIDSIZE, &restlength1[3]);
 
-	magic_buffer = new Buffer(sizeof(float), &magic, 0);
-	flag_buffer = new Buffer(sizeof(uint), &flag, 0);
-
-	clPosKernel->SetArguments(clPosBuffer, clPrevposBuffer, magic_buffer->GetDevicePtr());
-	clPos2Kernel->SetArguments(flag_buffer->GetDevicePtr(), clPosBuffer, clFixflagBuffer, clFixBuffer, clRestBuffer[0], clRestBuffer[1], clRestBuffer[2], clRestBuffer[3]);
+	clPosKernel->SetArguments(magic, clPosBuffer, clPrevposBuffer);
+	clPos2Kernel->SetArguments(0, clPosBuffer, clRestBuffer0, clRestBuffer1, clRestBuffer2, clRestBuffer3);
 	clFixKernel->SetArguments(clFixflagBuffer, clPosBuffer, clFixBuffer);
 
 	// create the cloth
@@ -154,8 +146,12 @@ void Game::Init()
 			grid(x, y).restlength[c] = length(rest) * 1.15f;
 		}
 	}
-	for (int c = 0; c < 4; c++)
-		clRestBuffer[c]->CopyToDevice();
+	clPosBuffer->CopyToDevice();
+	clPrevposBuffer->CopyToDevice();
+	clRestBuffer0->CopyToDevice();
+	clRestBuffer1->CopyToDevice();
+	clRestBuffer2->CopyToDevice();
+	clRestBuffer3->CopyToDevice();
 	clFixflagBuffer->CopyToDevice();
 	clFixBuffer->CopyToDevice();
 }
@@ -167,6 +163,7 @@ void Game::Init()
 void Game::DrawGrid()
 {
 	// draw the grid
+	clPosBuffer->CopyFromDevice();
 	screen->Clear( 0 );
 	for (int y = 0; y < (GRIDSIZE - 1); y++) for (int x = 1; x < (GRIDSIZE - 2); x++)
 	{
@@ -193,7 +190,7 @@ void Game::DrawGrid()
 //float magic = 0.11f;
 void Game::Simulation()
 {
-	clPosBuffer->CopyToDevice();
+	//clPosBuffer->CopyToDevice();
 	//clPrevposBuffer->CopyToDevice();
 	// simulation is exected three times per frame; do not change this.
 	for( int steps = 0; steps < 3; steps++ )
@@ -207,9 +204,8 @@ void Game::Simulation()
 		//	if (Rand(10) < 0.03f) grid(x, y).pos = float2{ grid(x, y).pos.x,grid(x, y).pos.y } + float2(Rand(0.02f + magic), Rand(0.12f));
 		//}
 		
-		magic_buffer->CopyToDevice();
+		clPosKernel->SetArguments(magic);
 		clPosKernel->Run(256 * 256);
-		magic_buffer->CopyFromDevice();
 
 		magic += 0.0002f; // slowly increases the chance of anomalies
 		// apply constraints; 4 simulation steps: do not change this number.
@@ -240,19 +236,19 @@ void Game::Simulation()
 			//	grid( x, y ).pos = pointpos;
 			//}
 			clPos2Kernel->SetArguments(0);
-			clPos2Kernel->Run(128 * 128);
+			clPos2Kernel->Run(128*128);
 			clPos2Kernel->SetArguments(1);
-			clPos2Kernel->Run(128 * 128);
+			clPos2Kernel->Run(128*128);
 			clPos2Kernel->SetArguments(2);
-			clPos2Kernel->Run(128 * 128);
+			clPos2Kernel->Run(128*128);
 			clPos2Kernel->SetArguments(3);
-			clPos2Kernel->Run(128 * 128);
-			// fixed line of points is fixed.
-			//for (int x = 0; x < GRIDSIZE; x++) grid( x, 0 ).pos = grid( x, 0 ).fix;
+			clPos2Kernel->Run(128*128);
+			//// fixed line of points is fixed.
+			////for (int x = 0; x < GRIDSIZE; x++) grid( x, 0 ).pos = grid( x, 0 ).fix;
 			clFixKernel->Run(256 * 256);
 		}
 	}
-	clPosBuffer->CopyFromDevice();
+	//clPosBuffer->CopyFromDevice();
 	//clPrevposBuffer->CopyFromDevice();
 }
 
